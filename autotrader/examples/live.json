@@ -1,15 +1,22 @@
 {
   "mode": "live",
-  "interval": "1d",
-  "lookback_days": 2500,
-  "loop_seconds": 300,
+  "interval": "1h",
+  "lookback_days": 730,
+  "loop_seconds": 60,
+  "risk_loop_seconds": 5,
   "symbols": [
-    {"symbol": "BTC/USDT", "data_symbol": "BTC-USD",     "market": "crypto", "broker": "freqtrade"},
-    {"symbol": "SPY",                                     "market": "us",     "broker": "alpaca"},
-    {"symbol": "RELIANCE", "data_symbol": "RELIANCE.NS", "market": "india",  "broker": "openalgo",
+    {"symbol": "BTC/USDT", "market": "crypto", "broker": "freqtrade"},
+    {"symbol": "SPY", "market": "us", "broker": "alpaca"},
+    {"symbol": "RELIANCE", "market": "india", "broker": "openalgo",
      "exchange": "NSE", "product": "CNC"}
   ],
-  "risk": {"risk_per_trade": 0.005, "max_position_pct": 0.1, "max_daily_loss_pct": 0.02},
+  "feeds": {
+    "crypto": {"type": "crypto"},
+    "us": {"type": "alpaca", "feed": "iex"},
+    "india": {"type": "openalgo", "host": "http://127.0.0.1:5000", "exchange": "NSE"}
+  },
+  "risk": {"risk_per_trade": 0.005, "max_position_pct": 0.1, "max_daily_loss_pct": 0.02,
+           "vol_target_annual": 0.5},
   "signals": {"use_llm": true, "llm_refresh_hours": 24},
   "brokers": {
     "freqtrade": {"type": "freqtrade", "url": "http://127.0.0.1:8080"},

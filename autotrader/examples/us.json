@@ -1,0 +1,37 @@
+{
+  "mode": "paper",
+  "interval": "1h",
+  "lookback_days": 1095,
+  "loop_seconds": 60,
+  "risk_loop_seconds": 10,
+  "data_source": "live",
+  "data_dir": "autotrader_data/us",
+  "symbols": [
+    {"symbol": "SPY",  "market": "us", "broker": "alpaca"},
+    {"symbol": "QQQ",  "market": "us", "broker": "alpaca"},
+    {"symbol": "AAPL", "market": "us", "broker": "alpaca"},
+    {"symbol": "MSFT", "market": "us", "broker": "alpaca"},
+    {"symbol": "NVDA", "market": "us", "broker": "alpaca"}
+  ],
+  "feeds": {"us": {"type": "alpaca", "feed": "iex"}},
+  "session": {"skip_open_minutes": 15, "skip_close_minutes": 15},
+  "risk": {
+    "risk_per_trade": 0.0075,
+    "max_position_pct": 0.25,
+    "max_open_positions": 4,
+    "max_daily_loss_pct": 0.02,
+    "atr_stop_mult": 2.0,
+    "reward_risk": 2.5,
+    "trail_after_atr": 1.5,
+    "vol_target_annual": 0.35,
+    "max_spread_pct": 0.001
+  },
+  "signals": {
+    "use_llm": false,
+    "trend_filter": true,
+    "trend_interval": "1d",
+    "trend_ema": 200,
+    "forecast_horizon": 14
+  },
+  "brokers": {"alpaca": {"type": "alpaca", "live": false}}
+}

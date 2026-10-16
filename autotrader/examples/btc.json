@@ -1,0 +1,41 @@
+{
+  "mode": "paper",
+  "interval": "1h",
+  "lookback_days": 730,
+  "loop_seconds": 60,
+  "risk_loop_seconds": 5,
+  "data_source": "live",
+  "data_dir": "autotrader_data/btc",
+  "symbols": [
+    {"symbol": "BTC/USDT", "market": "crypto", "broker": "paper"},
+    {"symbol": "ETH/USDT", "market": "crypto", "broker": "paper"}
+  ],
+  "feeds": {"crypto": {"type": "crypto"}},
+  "risk": {
+    "risk_per_trade": 0.01,
+    "max_position_pct": 0.5,
+    "max_open_positions": 2,
+    "max_daily_loss_pct": 0.03,
+    "atr_stop_mult": 2.5,
+    "reward_risk": 3.0,
+    "trail_after_atr": 1.5,
+    "vol_target_annual": 0.6,
+    "cooldown_bars": 6,
+    "max_spread_pct": 0.002
+  },
+  "signals": {
+    "technical_weight": 0.4,
+    "forecast_weight": 0.3,
+    "context_weight": 0.15,
+    "llm_weight": 0.3,
+    "use_context": true,
+    "use_llm": false,
+    "trend_filter": true,
+    "trend_interval": "1d",
+    "trend_ema": 200,
+    "buy_threshold": 0.35,
+    "sell_threshold": -0.25,
+    "forecast_horizon": 24
+  },
+  "brokers": {"paper": {"starting_cash": 10000, "fee_rate": 0.001, "slippage": 0.0005}}
+}

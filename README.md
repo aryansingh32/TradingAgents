@@ -241,7 +241,7 @@ An interface will appear showing results as they load, letting you track the age
 
 ## AutoTrader: automated trading bot
 
-The `autotrader` package turns TradingAgents into a bot that trades on its own: it combines a technical read and a history-analog forecast with the multi-agent debate, sizes each trade from its stop loss, and executes through a paper account, freqtrade (crypto), Alpaca (US stocks) or OpenAlgo (Indian brokers), with stop loss, take profit, trailing stops and a daily loss limit. It starts in paper mode. See [autotrader/README.md](autotrader/README.md).
+The `autotrader` package turns TradingAgents into a bot that trades Bitcoin and crypto, US stocks and Indian stocks on real-time data. It works from closed candles and combines a technical read, a history-analog forecast, crypto positioning (funding, open interest, Fear & Greed) and the multi-agent debate behind a daily trend filter. Every trade is sized from its stop loss. Stops and trailing stops are enforced on the live price. Cooldown, stop-loss, drawdown and losing-streak protections are built in, and a walk-forward optimizer tests parameters out of sample. Orders go to a paper account, freqtrade (crypto), Alpaca (US) or OpenAlgo (Indian brokers). The bot starts in paper mode. See [autotrader/README.md](autotrader/README.md).
 
 ## TradingAgents Package
 

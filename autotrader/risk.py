@@ -1,16 +1,16 @@
-"""Position sizing, protective stops and the daily loss limit."""
+"""Position sizing, protective stops, trading sessions."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from autotrader.config import RiskConfig
+from autotrader.config import RiskConfig, SessionConfig
 
-# Regular sessions. Exchange holidays are not modelled: on a holiday the
-# broker rejects or queues the order and the bot logs the error.
+# Regular sessions. Exchange holidays are caught by the data freshness check:
+# no new candles means no new decisions.
 _SESSIONS = {
     "us": (ZoneInfo("America/New_York"), time(9, 30), time(16, 0)),
     "india": (ZoneInfo("Asia/Kolkata"), time(9, 15), time(15, 30)),
@@ -25,6 +25,27 @@ def market_open(market: str, now: datetime) -> bool:
     return local.weekday() < 5 and start <= local.time() < end
 
 
+def entry_window_open(market: str, now: datetime, session: SessionConfig) -> bool:
+    """Open session minus the noisy first and last minutes."""
+    if market == "crypto":
+        return True
+    if not market_open(market, now):
+        return False
+    tz, start, end = _SESSIONS[market]
+    local = now.astimezone(tz)
+    day = local.date()
+    first = datetime.combine(day, start, tz) + timedelta(minutes=session.skip_open_minutes)
+    last = datetime.combine(day, end, tz) - timedelta(minutes=session.skip_close_minutes)
+    return first <= local < last
+
+
+def mis_squareoff_due(now: datetime, session: SessionConfig) -> bool:
+    tz = _SESSIONS["india"][0]
+    hh, mm = (int(x) for x in session.india_mis_squareoff.split(":"))
+    local = now.astimezone(tz)
+    return local.weekday() < 5 and local.time() >= time(hh, mm)
+
+
 @dataclass
 class Protection:
     """The protective levels the bot keeps for an open long position."""
@@ -34,6 +55,16 @@ class Protection:
     take: float
     atr: float
     highest: float
+    initial_stop: float | None = None
+    opened_at: str | None = None
+
+    def __post_init__(self):
+        if self.initial_stop is None:
+            self.initial_stop = self.stop
+
+    @property
+    def risk_per_unit(self) -> float:
+        return max(self.entry - self.initial_stop, 1e-12)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -52,6 +83,12 @@ def round_qty(qty: float, market: str) -> float:
     return float(math.floor(qty))
 
 
+def vol_multiplier(cfg: RiskConfig, annual_vol: float) -> float:
+    if not cfg.vol_target_annual or not annual_vol or math.isnan(annual_vol):
+        return 1.0
+    return max(cfg.min_size_mult, min(1.0, cfg.vol_target_annual / annual_vol))
+
+
 class RiskManager:
     def __init__(self, cfg: RiskConfig):
         self.cfg = cfg
@@ -62,15 +99,16 @@ class RiskManager:
                           take=price + self.cfg.reward_risk * stop_dist, atr=atr, highest=price)
 
     def plan_entry(self, price: float, atr: float, equity: float, cash: float,
-                   market: str) -> TradePlan | None:
+                   market: str, size_mult: float = 1.0) -> TradePlan | None:
         """Size a long entry so that hitting the stop loses ``risk_per_trade``
-        of equity, capped by ``max_position_pct`` and available cash."""
-        if price <= 0 or atr <= 0 or equity <= 0:
+        (times ``size_mult``) of equity, capped by ``max_position_pct`` and
+        available cash."""
+        if price <= 0 or atr <= 0 or equity <= 0 or size_mult <= 0:
             return None
         stop_dist = self.cfg.atr_stop_mult * atr
         if stop_dist >= price:
             return None
-        qty = equity * self.cfg.risk_per_trade / stop_dist
+        qty = equity * self.cfg.risk_per_trade * size_mult / stop_dist
         qty = min(qty, equity * self.cfg.max_position_pct / price, max(cash, 0) * 0.99 / price)
         qty = round_qty(qty, market)
         if qty <= 0:
@@ -97,7 +135,7 @@ class RiskManager:
         """Which protective level the bar touched, and the exit price. When a
         bar spans both, assume the stop filled first (the conservative read)."""
         if low <= prot.stop:
-            return "stop_loss", prot.stop
+            return ("trailing_stop" if prot.stop > prot.initial_stop else "stop_loss"), prot.stop
         if high >= prot.take:
             return "take_profit", prot.take
         return None
