@@ -239,6 +239,10 @@ An interface will appear showing results as they load, letting you track the age
   <img src="assets/cli/cli_transaction.png" width="100%" style="display: inline-block; margin: 0 2%;">
 </p>
 
+## AutoTrader: automated trading bot
+
+The `autotrader` package turns TradingAgents into a bot that trades on its own: it combines a technical read and a history-analog forecast with the multi-agent debate, sizes each trade from its stop loss, and executes through a paper account, freqtrade (crypto), Alpaca (US stocks) or OpenAlgo (Indian brokers), with stop loss, take profit, trailing stops and a daily loss limit. It starts in paper mode. See [autotrader/README.md](autotrader/README.md).
+
 ## TradingAgents Package
 
 ### Implementation Details

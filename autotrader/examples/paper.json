@@ -1,0 +1,36 @@
+{
+  "mode": "paper",
+  "interval": "1d",
+  "lookback_days": 2500,
+  "loop_seconds": 900,
+  "data_source": "yfinance",
+  "data_dir": "autotrader_data",
+  "symbols": [
+    {"symbol": "BTC-USD",     "market": "crypto", "broker": "paper"},
+    {"symbol": "ETH-USD",     "market": "crypto", "broker": "paper"},
+    {"symbol": "SPY",         "market": "us",     "broker": "paper"},
+    {"symbol": "AAPL",        "market": "us",     "broker": "paper"},
+    {"symbol": "RELIANCE.NS", "market": "india",  "broker": "paper"},
+    {"symbol": "TCS.NS",      "market": "india",  "broker": "paper"}
+  ],
+  "risk": {
+    "risk_per_trade": 0.01,
+    "max_position_pct": 0.2,
+    "max_open_positions": 5,
+    "max_daily_loss_pct": 0.03,
+    "atr_stop_mult": 2.0,
+    "reward_risk": 2.0,
+    "trail_after_atr": 1.0
+  },
+  "signals": {
+    "use_llm": false,
+    "technical_weight": 0.4,
+    "forecast_weight": 0.3,
+    "llm_weight": 0.3,
+    "buy_threshold": 0.35,
+    "sell_threshold": -0.25
+  },
+  "brokers": {
+    "paper": {"starting_cash": 100000}
+  }
+}
