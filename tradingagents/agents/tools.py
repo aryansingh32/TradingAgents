@@ -289,3 +289,30 @@ def get_prediction_markets(
         str: A formatted markdown report of matching prediction markets
     """
     return route_to_vendor("get_prediction_markets", topic, limit, trade_date or None)
+
+
+@tool
+def get_world_monitor(
+    focus: Annotated[
+        str | None,
+        "Optional ticker or asset to surface first, e.g. 'NVDA' or 'BTC-USD'; omit for the global picture.",
+    ] = None,
+    limit: Annotated[int | None, "Max headlines; omit for a default of 12"] = None,
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    Retrieve World Monitor's live global intelligence: scored, deduplicated
+    breaking news from hundreds of feeds (importance, threat level, story
+    phase, corroboration, tickers mentioned), cross-source escalation signals
+    (market stress, VIX spikes, commodity and shipping shocks, conflict
+    escalation), market-implication cards, high-impact economic events for the
+    next week and, with a focus ticker, its upcoming earnings.
+
+    Args:
+        focus (str): Optional ticker or asset to prioritise
+        limit (int): Max headlines; omit for a default of 12
+
+    Returns:
+        str: A formatted markdown brief
+    """
+    return route_to_vendor("get_world_monitor", focus, limit, trade_date or None)

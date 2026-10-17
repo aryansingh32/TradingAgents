@@ -164,6 +164,7 @@ def build_default_config() -> dict:
             "news_data": "yfinance",             # Options: alpha_vantage, yfinance
             "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
             "prediction_markets": "polymarket",  # Options: polymarket (keyless)
+            "world_intel": "worldmonitor",       # Options: worldmonitor (WORLDMONITOR_API_KEY)
         },
         # Tool-level configuration (takes precedence over category-level)
         "tool_vendors": {

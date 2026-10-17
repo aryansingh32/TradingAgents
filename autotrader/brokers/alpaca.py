@@ -46,7 +46,11 @@ class AlpacaBroker(HttpBroker):
                 return 0.0
             raise
 
-    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection) -> dict:
+    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection | None) -> dict:
+        if protection is None:  # accumulation buy: no exit orders
+            return self._request("POST", "/v2/orders", json={
+                "symbol": symbol.symbol, "qty": str(int(qty)), "side": "buy", "type": "market",
+                "time_in_force": "day"})
         order = {
             "symbol": symbol.symbol, "qty": str(int(qty)), "side": "buy", "type": "market",
             # GTC so the protective legs survive overnight.
@@ -61,3 +65,20 @@ class AlpacaBroker(HttpBroker):
         for order in self._request("GET", "/v2/orders", params={"status": "open", "symbols": symbol.symbol}):
             self._request("DELETE", f"/v2/orders/{order['id']}")
         return self._request("DELETE", f"/v2/positions/{symbol.symbol}")
+
+    def reduce(self, symbol: SymbolConfig, qty: float, price: float, new_stop: float) -> dict:
+        # The bracket legs hold the shares: cancel them, sell the part, then
+        # protect the remainder with a fresh GTC stop at the new level.
+        total = self.position_qty(symbol)
+        for order in self._request("GET", "/v2/orders", params={"status": "open", "symbols": symbol.symbol}):
+            self._request("DELETE", f"/v2/orders/{order['id']}")
+        sold = self._request("POST", "/v2/orders", json={
+            "symbol": symbol.symbol, "qty": str(int(qty)), "side": "sell", "type": "market",
+            "time_in_force": "day"})
+        rest = int(total - qty)
+        stop = None
+        if rest > 0:
+            stop = self._request("POST", "/v2/orders", json={
+                "symbol": symbol.symbol, "qty": str(rest), "side": "sell", "type": "stop",
+                "stop_price": f"{new_stop:.2f}", "time_in_force": "gtc"})
+        return {"sell": sold, "stop": stop}

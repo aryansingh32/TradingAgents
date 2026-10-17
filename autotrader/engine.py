@@ -36,6 +36,7 @@ from autotrader.risk import (
     entry_window_open,
     market_open,
     mis_squareoff_due,
+    round_qty,
     vol_multiplier,
 )
 from autotrader.signals import (
@@ -45,6 +46,7 @@ from autotrader.signals import (
     technical_opinion,
     trend_opinion,
 )
+from autotrader.signals_extra import extra_opinions
 
 log = logging.getLogger(__name__)
 
@@ -62,15 +64,17 @@ def build_market_data(cfg: BotConfig) -> MarketData:
 class Engine:
     def __init__(self, cfg: BotConfig, brokers: dict[str, Broker] | None = None,
                  market_data: MarketData | None = None, llm: LLMAdvisor | None = None,
-                 context=None):
+                 context=None, news=None, notifier=None):
         cfg.require_live_confirmation()
         self.cfg = cfg
         self.dir: Path = cfg.data_path
         live = cfg.mode == "live"
+        used = {s.broker for s in cfg.symbols} | {a.broker for a in cfg.accumulate}
+        if cfg.universe.enabled:
+            used.add(cfg.universe.broker)
         self.brokers = brokers if brokers is not None else {
             name: build_broker(name, section, self.dir, live)
-            for name, section in cfg.brokers.items()
-            if name in {s.broker for s in cfg.symbols}
+            for name, section in cfg.brokers.items() if name in used
         }
         self.md = market_data or build_market_data(cfg)
         self.llm = llm
@@ -82,13 +86,28 @@ class Engine:
             from autotrader.context import CryptoContext
 
             self.context = CryptoContext()
+        self.news = news
+        if self.news is None and cfg.news.enabled:
+            from autotrader.news import NewsMonitor
+
+            monitor = NewsMonitor(cfg.news)
+            self.news = monitor if monitor.available else False
+        from autotrader.notify import Notifier
+
+        self.notifier = notifier or Notifier(cfg.notify)
         self.risk = RiskManager(cfg.risk)
         self.step_delta = interval_delta(cfg.interval)
         self.state_file = self.dir / "bot_state.json"
         self.state = self._load_json(self.state_file, {})
         for key, default in (("protections", {}), ("day", None), ("day_start_equity", {}),
-                             ("guards", {}), ("last_bar", {})):
+                             ("guards", {}), ("last_bar", {}), ("paused", False), ("universe", []),
+                             ("universe_at", None), ("dca", {})):
             self.state.setdefault(key, default)
+        from autotrader.accumulate import Accumulator
+
+        fg = (lambda: self.context._fear_greed()) if self.context else None
+        self.accumulator = Accumulator(cfg.accumulate, self.brokers, self.md, self.state, self.journal, fg) \
+            if cfg.accumulate else None
         self.guards = {name: Protections(cfg.risk, ProtectionState.from_dict(self.state["guards"].get(name)))
                        for name in self.brokers}
         self.decisions: dict[str, Decision] = {}
@@ -114,6 +133,10 @@ class Engine:
         with (self.dir / "journal.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, default=str) + "\n")
         log.info("%s %s", event, {k: v for k, v in fields.items() if k != "decision"})
+        if event in self.notifier.cfg.events:
+            brief = ", ".join(f"{k}={v}" for k, v in fields.items()
+                              if k in ("symbol", "reason", "qty", "price", "pnl", "r", "amount", "error"))
+            self.notifier.send(event, f"[{self.cfg.mode}] {event}: {brief}")
 
     def _write_signal(self, sym: SymbolConfig, price: float, decision: Decision, now: datetime) -> None:
         path = self.dir / "signals.json"
@@ -129,6 +152,14 @@ class Engine:
             forecast_opinion(df, sc.forecast_horizon, sc.forecast_neighbors, window=sc.forecast_window)
             if sc.forecast_weight > 0 else None,
         ]
+        opinions += extra_opinions(df, {
+            "patterns": sc.patterns_weight, "volume": sc.volume_weight,
+            "trend_strength": sc.trend_strength_weight, "mean_reversion": sc.mean_reversion_weight})
+        if self.news and sc.news_weight > 0:
+            try:
+                opinions.append(self.news.opinion(sym))
+            except Exception as exc:
+                log.info("news opinion unavailable for %s: %s", sym.symbol, exc)
         if self.llm is not None and sc.llm_weight > 0:
             opinions.append(self.llm.opinion(sym.symbol, sym.market, now))
         if self.context is not None and sym.market == "crypto" and sc.context_weight > 0:
@@ -196,6 +227,9 @@ class Engine:
             self.journal("adopted_position", symbol=sym.symbol, qty=qty, protection=prot.to_dict())
         else:
             prot = Protection(**raw)
+        level = self.risk.partial_level(prot, self.cfg.trade.partial_tp_r)
+        if level is not None and price >= level:
+            self._partial_exit(sym, broker, qty, price, prot, now)
         self.risk.update_trailing(prot, price)
         prots[sym.symbol] = prot.to_dict()
         hit = self.risk.exit_reason(prot, price, price)
@@ -207,10 +241,114 @@ class Engine:
                 and mis_squareoff_due(now, self.cfg.session):
             self._exit(sym, broker, qty, price, "intraday_squareoff", now)
 
+    def _partial_exit(self, sym: SymbolConfig, broker: Broker, qty: float, price: float,
+                      prot: Protection, now: datetime) -> None:
+        part = round_qty(qty * self.cfg.trade.partial_tp_fraction, sym.market)
+        prot.partial_done = True
+        new_stop = max(prot.stop, prot.entry * 1.002) if self.cfg.trade.breakeven_after_partial else prot.stop
+        if not 0 < part < qty:
+            return
+        try:
+            result = broker.reduce(sym, part, price, new_stop)
+        except NotImplementedError as exc:
+            self.journal("partial_skipped", symbol=sym.symbol, reason=str(exc))
+            return
+        prot.stop = new_stop
+        self.journal("partial_exit", symbol=sym.symbol, qty=part, price=price,
+                     reason=f"{self.cfg.trade.partial_tp_r}R reached; stop to breakeven", result=result)
+
+    # -- symbols, commands, housekeeping -----------------------------------
+    def active_symbols(self) -> list[SymbolConfig]:
+        extra = [SymbolConfig(**raw) for raw in self.state["universe"]]
+        seen = {(s.broker, s.symbol) for s in self.cfg.symbols}
+        return list(self.cfg.symbols) + [s for s in extra if (s.broker, s.symbol) not in seen]
+
+    def _refresh_universe(self, now: datetime) -> None:
+        u = self.cfg.universe
+        if not u.enabled:
+            return
+        at = self.state["universe_at"]
+        if at and now - datetime.fromisoformat(at) < timedelta(hours=u.refresh_hours):
+            return
+        from dataclasses import asdict
+
+        from autotrader.scanner import select
+
+        try:
+            picks = select(u, self.md)
+        except Exception as exc:
+            self.journal("error", error=f"universe refresh: {exc!r}")
+            return
+        # Keep symbols that still hold a position until they are closed.
+        held = [raw for raw in self.state["universe"] if raw["symbol"] in self.state["protections"]]
+        names = {p.symbol for p in picks}
+        self.state["universe"] = [asdict(p) for p in picks] + [h for h in held if h["symbol"] not in names]
+        self.state["universe_at"] = now.isoformat()
+        self.journal("universe", symbols=[p.symbol for p in picks])
+
+    def handle_command(self, cmd: str, now: datetime | None = None) -> str:
+        now = now or datetime.now(UTC)
+        if cmd == "pause":
+            self.state["paused"] = True
+            reply = "paused: no new entries; stops and exits keep running"
+        elif cmd == "resume":
+            self.state["paused"] = False
+            reply = "resumed"
+        elif cmd == "panic":
+            closed = []
+            for sym in self.active_symbols():
+                broker = self.brokers[sym.broker]
+                try:
+                    qty = broker.position_qty(sym)
+                    if qty > 0:
+                        price, _ = self._price(sym, self.state["protections"].get(sym.symbol, {}).get("entry"))
+                        self._exit(sym, broker, qty, price, "panic", now)
+                        closed.append(sym.symbol)
+                except Exception as exc:
+                    self.journal("error", symbol=sym.symbol, error=f"panic: {exc!r}")
+            self.state["paused"] = True
+            reply = f"panic: closed {closed or 'nothing'}; paused"
+        elif cmd == "status":
+            lines = [f"mode {self.cfg.mode}, {'PAUSED' if self.state['paused'] else 'running'}"]
+            for name, b in self.brokers.items():
+                try:
+                    lines.append(f"{name}: equity {b.equity():,.2f}")
+                except Exception as exc:
+                    lines.append(f"{name}: {exc}")
+            for s, p in self.state["protections"].items():
+                lines.append(f"{s}: entry {p['entry']:.2f} stop {p['stop']:.2f} take {p['take']:.2f}")
+            reply = "\n".join(lines)
+        elif cmd == "daily":
+            reply = self.daily_summary()
+        else:
+            reply = "commands: /status /pause /resume /panic /daily"
+        self._save_state()
+        self.journal("command", command=cmd)
+        return reply
+
+    def daily_summary(self) -> str:
+        lines = ["daily summary"]
+        for name, b in self.brokers.items():
+            start = self.state["day_start_equity"].get(name)
+            try:
+                eq = b.equity()
+                change = f" ({eq / start - 1:+.2%} today)" if start else ""
+                lines.append(f"{name}: equity {eq:,.2f}{change}")
+            except Exception as exc:
+                lines.append(f"{name}: {exc}")
+        lines.append(f"open positions: {', '.join(self.state['protections']) or 'none'}")
+        return "\n".join(lines)
+
+    def _housekeeping(self, now: datetime) -> None:
+        for cmd in self.notifier.poll_commands():
+            self.notifier.say(self.handle_command(cmd, now))
+        (self.dir / self.cfg.heartbeat_file).write_text(now.isoformat(), encoding="utf-8")
+
     # -- fast loop: protection on live prices -----------------------------
     def risk_tick(self, now: datetime | None = None) -> None:
         now = now or datetime.now(UTC)
-        for sym in self.cfg.symbols:
+        self._housekeeping(now)
+        for sym in self.active_symbols():
             if sym.symbol not in self.state["protections"] or not market_open(sym.market, now):
                 continue
             try:
@@ -230,9 +368,16 @@ class Engine:
     # -- slow loop: decisions on closed candles ----------------------------
     def step(self, now: datetime | None = None) -> dict[str, Decision]:
         now = now or datetime.now(UTC)
+        new_day = self.state["day"] not in (None, now.date().isoformat())
+        if new_day:
+            self.notifier.send("daily_summary", self.daily_summary())
         self._roll_day(now)
+        self._housekeeping(now)
+        self._refresh_universe(now)
+        if self.accumulator:
+            self.accumulator.step(now)
         out = {}
-        for sym in self.cfg.symbols:
+        for sym in self.active_symbols():
             try:
                 d = self._step_symbol(sym, now)
                 if d is not None:
@@ -283,15 +428,26 @@ class Engine:
         def blocked(reason):
             self.journal("entry_blocked", symbol=sym.symbol, reason=reason)
 
+        if self.state["paused"]:
+            return blocked("paused (/resume to restart entries)")
         if not entry_window_open(sym.market, now, self.cfg.session):
             return blocked("outside the entry window (session open/close buffer)")
+        if self.news:
+            try:
+                why = self.news.entry_block(sym, now)
+            except Exception as exc:
+                why = None
+                log.info("news guard unavailable: %s", exc)
+            if why:
+                self.journal("entry_blocked_news", symbol=sym.symbol, reason=why)
+                return None
         if quote is not None and quote.spread_pct is not None and quote.spread_pct > self.cfg.risk.max_spread_pct:
             return blocked(f"spread {quote.spread_pct:.3%} wider than {self.cfg.risk.max_spread_pct:.3%}")
         equity = broker.equity()
         guards = self.guards[sym.broker]
         guards.record_equity(equity)
         prots = self.state["protections"]
-        open_here = sum(1 for s in self.cfg.symbols if s.broker == sym.broker and s.symbol in prots)
+        open_here = sum(1 for s in self.active_symbols() if s.broker == sym.broker and s.symbol in prots)
         ok, why = self.risk.can_open(open_here, self.state["day_start_equity"].get(sym.broker, equity), equity)
         if ok:
             ok, why = guards.allows_entry(sym.symbol, now, equity, self.step_delta)

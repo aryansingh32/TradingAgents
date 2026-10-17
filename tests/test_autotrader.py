@@ -27,6 +27,7 @@ from autotrader.config import (
     SessionConfig,
     SignalConfig,
     SymbolConfig,
+    TradeManagementConfig,
     config_from_dict,
     load_config,
 )
@@ -622,7 +623,8 @@ def test_backtest_gap_through_stop_fills_at_open():
     df.iloc[-1, df.columns.get_loc("open")] = 80.0  # gap down
     df["high"], df["low"] = df[["open", "close"]].max(axis=1) * 1.001, df[["open", "close"]].min(axis=1) * 0.999
     sig = SignalConfig(forecast_weight=0.0, trend_filter=False, buy_threshold=0.0, trend_interval="1d")
-    res = run_backtest(df, RiskConfig(reward_risk=50, trail_after_atr=0), sig, cost=0.0)
+    res = run_backtest(df, RiskConfig(reward_risk=50, trail_after_atr=0), sig, cost=0.0,
+                       trade_cfg=TradeManagementConfig(partial_tp_r=0))
     last = res.trades[-1]
     assert last["reason"] == "stop_loss" and last["exit"] == pytest.approx(80.0)
 

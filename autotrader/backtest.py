@@ -28,10 +28,11 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
-from autotrader.config import RiskConfig, SessionConfig, SignalConfig
+from autotrader.config import RiskConfig, SessionConfig, SignalConfig, TradeManagementConfig
+from autotrader.ensemble import weights_of
 from autotrader.feeds import interval_delta
 from autotrader.protections import Protections
-from autotrader.risk import RiskManager, entry_window_open, vol_multiplier
+from autotrader.risk import RiskManager, entry_window_open, round_qty, vol_multiplier
 from autotrader.signals import (
     MIN_BARS_TECHNICAL,
     align_to,
@@ -40,6 +41,7 @@ from autotrader.signals import (
     technical_scores,
     trend_up_series,
 )
+from autotrader.signals_extra import EXTRA
 
 
 @dataclass
@@ -47,11 +49,18 @@ class Prepared:
     df: pd.DataFrame
     interval: str
     market: str
-    technical: np.ndarray
-    forecast: np.ndarray
+    scores: dict[str, np.ndarray]  # opinion name -> per-bar score (nan = no opinion)
     trend_up: np.ndarray  # 1.0 up, 0.0 not up, nan unknown
     atr: np.ndarray
     vol: np.ndarray
+
+    @property
+    def technical(self) -> np.ndarray:
+        return self.scores["technical"]
+
+    @property
+    def forecast(self) -> np.ndarray:
+        return self.scores["forecast"]
 
 
 @dataclass
@@ -75,6 +84,9 @@ def prepare(df: pd.DataFrame, sig: SignalConfig, interval: str = "1d", market: s
     tech = technical_scores(df)
     fc = (forecast_scores(df, sig.forecast_horizon, sig.forecast_neighbors, sig.forecast_window)
           if sig.forecast_weight > 0 else pd.Series(np.nan, index=df.index))
+    scores = {"technical": tech["score"].to_numpy(), "forecast": fc.to_numpy()}
+    for name, fn in EXTRA.items():
+        scores[name] = fn(df).to_numpy(dtype=float)
     step = interval_delta(interval)
     htf_step = interval_delta(sig.trend_interval)
     if htf is None:
@@ -82,23 +94,32 @@ def prepare(df: pd.DataFrame, sig: SignalConfig, interval: str = "1d", market: s
     trend = align_to(trend_up_series(htf, sig.trend_ema).astype(float), htf_step, df.index, step)
     bpy = bars_per_year(interval, market)
     vol = np.log(df["close"]).diff().rolling(60).std() * np.sqrt(bpy)
-    return Prepared(df, interval, market, tech["score"].to_numpy(), fc.to_numpy(),
-                    trend.to_numpy(dtype=float), tech["atr"].to_numpy(), vol.to_numpy())
+    return Prepared(df, interval, market, scores, trend.to_numpy(dtype=float),
+                    tech["atr"].to_numpy(), vol.to_numpy())
 
 
 def combined_score(p: Prepared, sig: SignalConfig) -> np.ndarray:
-    tech_ok, fc_ok = ~np.isnan(p.technical), ~np.isnan(p.forecast)
-    num = (np.where(tech_ok, sig.technical_weight * np.nan_to_num(p.technical), 0)
-           + np.where(fc_ok, sig.forecast_weight * np.nan_to_num(p.forecast), 0))
-    den = np.where(tech_ok, sig.technical_weight, 0) + np.where(fc_ok, sig.forecast_weight, 0)
+    """Weighted mean of the opinions present at each bar (as ``combine``)."""
+    weights = weights_of(sig)
+    n = len(p.df)
+    num, den = np.zeros(n), np.zeros(n)
+    for name, arr in p.scores.items():
+        w = weights.get(name, 0.0)
+        if w <= 0:
+            continue
+        ok = ~np.isnan(arr)
+        num += np.where(ok, w * np.nan_to_num(arr), 0.0)
+        den += np.where(ok, w, 0.0)
     with np.errstate(invalid="ignore", divide="ignore"):
         return np.where(den > 0, num / den, np.nan)
 
 
 def simulate(p: Prepared, risk_cfg: RiskConfig, sig: SignalConfig, cost: float = 0.001,
              starting_cash: float = 100000.0, start: int | None = None, end: int | None = None,
-             session: SessionConfig | None = None) -> BacktestResult:
+             session: SessionConfig | None = None,
+             trade_cfg: TradeManagementConfig | None = None) -> BacktestResult:
     df = p.df
+    trade_cfg = trade_cfg or TradeManagementConfig()
     session = session or SessionConfig()
     rm = RiskManager(risk_cfg)
     guards = Protections(risk_cfg)
@@ -111,11 +132,16 @@ def simulate(p: Prepared, risk_cfg: RiskConfig, sig: SignalConfig, cost: float =
 
     score = combined_score(p, sig)
     trend_block = (p.trend_up == 0.0) if sig.trend_filter else np.zeros(len(df), bool)
-    want_buy = ((score >= sig.buy_threshold) & ~trend_block).tolist()
+    want_buy = (score >= sig.buy_threshold) & ~trend_block
+    if sig.mean_reversion_weight > 0 and "mean_reversion" in p.scores:
+        mr = np.nan_to_num(p.scores["mean_reversion"], nan=-1.0)
+        want_buy |= (mr >= sig.mean_reversion_trigger) & (p.trend_up == 1.0)
+    want_buy = want_buy.tolist()
     want_sell = (score <= sig.sell_threshold).tolist()
     opens, highs, lows, closes_l = opens.tolist(), highs.tolist(), lows.tolist(), closes.tolist()
 
     cash, qty, prot, entry_i, entry_cost = starting_cash, 0.0, None, -1, 0.0
+    qty0, realized = 0.0, 0.0  # initial size, proceeds of partial exits
     pending_buy = pending_sell = False
     trades: list[dict] = []
     curve = np.empty(max(last - first, 0))
@@ -123,13 +149,14 @@ def simulate(p: Prepared, risk_cfg: RiskConfig, sig: SignalConfig, cost: float =
 
     def close_trade(price: float, i: int, reason: str):
         nonlocal cash, qty, prot
-        proceeds = qty * price * (1 - cost)
+        last_leg = qty * price * (1 - cost)
+        cash += last_leg
+        proceeds = realized + last_leg
         pnl = proceeds - entry_cost
-        cash += proceeds
-        r_mult = pnl / (qty * prot.risk_per_unit)
+        r_mult = pnl / (qty0 * prot.risk_per_unit)
         trades.append({"entry_time": idx[entry_i], "exit_time": idx[i], "entry": prot.entry, "exit": price,
-                       "qty": qty, "pnl": pnl, "return": proceeds / entry_cost - 1, "r": r_mult,
-                       "reason": reason, "bars": i - entry_i})
+                       "qty": qty0, "pnl": pnl, "return": proceeds / entry_cost - 1, "r": r_mult,
+                       "reason": reason, "bars": i - entry_i, "partial": prot.partial_done})
         guards.record_exit("s", idx[i].to_pydatetime(), pnl, reason)
         qty, prot = 0.0, None
 
@@ -154,6 +181,7 @@ def simulate(p: Prepared, risk_cfg: RiskConfig, sig: SignalConfig, cost: float =
                 plan = rm.plan_entry(opens[i], p.atr[i - 1], equity, cash / (1 + cost), p.market, mult)
                 if plan:
                     qty, prot, entry_i = plan.qty, plan.protection, i
+                    qty0, realized = qty, 0.0
                     entry_cost = qty * opens[i] * (1 + cost)
                     cash -= entry_cost
         pending_buy = pending_sell = False
@@ -165,6 +193,17 @@ def simulate(p: Prepared, risk_cfg: RiskConfig, sig: SignalConfig, cost: float =
                 fill = max(opens[i], hit[1]) if hit[0] == "take_profit" else min(opens[i], hit[1])
                 close_trade(fill, i, hit[0])
             else:
+                level = rm.partial_level(prot, trade_cfg.partial_tp_r)
+                if level is not None and highs[i] >= level:
+                    part = round_qty(qty * trade_cfg.partial_tp_fraction, p.market)
+                    if 0 < part < qty:
+                        fill = max(opens[i], level)
+                        realized += part * fill * (1 - cost)
+                        cash += part * fill * (1 - cost)
+                        qty -= part
+                    prot.partial_done = True
+                    if trade_cfg.breakeven_after_partial:
+                        prot.stop = max(prot.stop, prot.entry * (1 + 2 * cost))
                 rm.update_trailing(prot, highs[i])
 
         if qty > 0 and want_sell[i]:
@@ -224,7 +263,9 @@ def stats(equity: pd.Series, trades: list[dict], closes: np.ndarray, interval: s
 def run_backtest(df: pd.DataFrame, risk_cfg: RiskConfig | None = None, sig_cfg: SignalConfig | None = None,
                  market: str = "crypto", interval: str = "1d", cost: float = 0.001,
                  starting_cash: float = 100000.0, htf: pd.DataFrame | None = None,
-                 session: SessionConfig | None = None) -> BacktestResult:
+                 session: SessionConfig | None = None,
+                 trade_cfg: TradeManagementConfig | None = None) -> BacktestResult:
     sig_cfg = sig_cfg or SignalConfig()
     p = prepare(df, sig_cfg, interval, market, htf)
-    return simulate(p, risk_cfg or RiskConfig(), sig_cfg, cost, starting_cash, session=session)
+    return simulate(p, risk_cfg or RiskConfig(), sig_cfg, cost, starting_cash, session=session,
+                    trade_cfg=trade_cfg)

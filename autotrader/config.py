@@ -65,6 +65,19 @@ class SignalConfig:
     # Crypto derivatives and sentiment context (funding, open interest, Fear & Greed).
     context_weight: float = 0.15
     use_context: bool = True
+    # World Monitor headline tilt (see NewsConfig); not replayed in backtests.
+    news_weight: float = 0.1
+    # Extra price-based opinions (see signals_extra.py): candlestick patterns,
+    # volume/VWAP, ADX + Supertrend trend strength, and RSI(2) / Bollinger
+    # mean reversion that only buys dips inside an uptrend.
+    patterns_weight: float = 0.1
+    volume_weight: float = 0.1
+    trend_strength_weight: float = 0.15
+    mean_reversion_weight: float = 0.15
+    # A mean-reversion setup at or above this score buys on its own when the
+    # higher timeframe is confirmed up, even if momentum still reads negative.
+    # Above 1 disables the setup.
+    mean_reversion_trigger: float = 0.7
     # Final score in [-1, 1] needed to buy / to sell.
     buy_threshold: float = 0.35
     sell_threshold: float = -0.25
@@ -83,6 +96,92 @@ class SignalConfig:
     forecast_neighbors: int = 50
     # Most recent bars the analog search looks through (bounds its cost).
     forecast_window: int = 8000
+
+
+@dataclass
+class NewsConfig:
+    """World Monitor news and event-risk settings (key in WORLDMONITOR_API_KEY,
+    or base_url for a self-hosted instance)."""
+
+    enabled: bool = True
+    base_url: str | None = None
+    variant: str = "finance"
+    refresh_seconds: int = 300
+    lookback_hours: float = 24.0
+    # Block new entries after a critical breaking story (with at least
+    # shock_min_sources sources) or a high-severity market-stress signal.
+    shock_guard: bool = True
+    shock_hours: float = 3.0
+    shock_min_sources: int = 3
+    # Block new entries on the day of a high-impact release for the market's country.
+    macro_guard: bool = True
+    # Block new stock entries this many days before earnings.
+    earnings_guard: bool = True
+    earnings_days: int = 1
+    blackout_dates: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TradeManagementConfig:
+    # Scale out: at partial_tp_r times the initial risk, sell partial_tp_fraction
+    # of the position and move the stop to breakeven. 0 disables.
+    partial_tp_r: float = 1.0
+    partial_tp_fraction: float = 0.5
+    breakeven_after_partial: bool = True
+
+
+@dataclass
+class AccumulateConfig:
+    """Smart DCA: buy a fixed amount on a schedule, more when cheap, less when
+    euphoric; never sells. For long-term stacking (e.g. Bitcoin)."""
+
+    symbol: str
+    market: str = "crypto"
+    broker: str = "paper"
+    data_symbol: str | None = None
+    amount: float = 50.0  # quote currency per buy
+    every_hours: float = 24.0 * 7
+    # Multiply the amount when price is below its 200-day EMA, and when the
+    # crypto Fear & Greed index shows extreme fear; shrink it in euphoria.
+    dip_multiplier: float = 2.0
+    fear_multiplier: float = 1.5
+    greed_multiplier: float = 0.5
+    max_multiplier: float = 3.0
+
+    @property
+    def price_symbol(self) -> str:
+        return self.data_symbol or self.symbol
+
+
+@dataclass
+class UniverseConfig:
+    """Dynamic symbol selection, as volume / momentum pair lists do in popular bots."""
+
+    enabled: bool = False
+    market: str = "crypto"
+    broker: str = "paper"
+    # crypto: top_n Binance USDT pairs by 24h quote volume (stablecoins and
+    # leveraged tokens excluded); stocks: rank `watchlist` by momentum.
+    top_n: int = 5
+    min_quote_volume: float = 50_000_000
+    watchlist: list[str] = field(default_factory=list)
+    exchange: str | None = None
+    product: str | None = None
+    refresh_hours: float = 24.0
+
+
+@dataclass
+class NotifyConfig:
+    """Telegram (token in TELEGRAM_BOT_TOKEN, chat in TELEGRAM_CHAT_ID) and/or
+    a Discord webhook (DISCORD_WEBHOOK_URL)."""
+
+    telegram: bool = False
+    discord: bool = False
+    events: list[str] = field(default_factory=lambda: [
+        "entry", "exit", "partial_exit", "entry_blocked_news", "error", "daily_summary",
+        "paused", "resumed", "accumulate", "stale_data"])
+    # Accept /status /pause /resume /panic /daily from the configured chat.
+    telegram_commands: bool = True
 
 
 @dataclass
@@ -147,6 +246,13 @@ class BotConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     signals: SignalConfig = field(default_factory=SignalConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    news: NewsConfig = field(default_factory=NewsConfig)
+    trade: TradeManagementConfig = field(default_factory=TradeManagementConfig)
+    accumulate: list[AccumulateConfig] = field(default_factory=list)
+    universe: UniverseConfig = field(default_factory=UniverseConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
+    # Written every loop; a watchdog restarts the bot when it goes stale.
+    heartbeat_file: str = "heartbeat"
     feeds: dict[str, dict] = field(default_factory=_default_feeds)
     costs: dict[str, float] = field(default_factory=_default_costs)
     brokers: dict[str, dict] = field(default_factory=lambda: {"paper": {"starting_cash": 100000}})
@@ -185,7 +291,7 @@ def load_config(path: str | Path) -> BotConfig:
 
 
 def apply_tuned(cfg: BotConfig, tuned: dict) -> None:
-    for section in ("risk", "signals"):
+    for section in ("risk", "signals", "trade"):
         target = getattr(cfg, section)
         for key, value in tuned.get(section, {}).items():
             if not hasattr(target, key):
@@ -196,16 +302,30 @@ def apply_tuned(cfg: BotConfig, tuned: dict) -> None:
 def config_from_dict(raw: dict) -> BotConfig:
     raw = dict(raw)
     symbols = [SymbolConfig(**s) for s in raw.pop("symbols", [])]
-    if not symbols:
-        raise ValueError("config needs at least one entry in 'symbols'")
+    if not symbols and not raw.get("accumulate") and not raw.get("universe", {}).get("enabled"):
+        raise ValueError("config needs at least one entry in 'symbols' (or 'accumulate' / 'universe')")
     risk = RiskConfig(**raw.pop("risk", {}))
     signals = SignalConfig(**raw.pop("signals", {}))
     session = SessionConfig(**raw.pop("session", {}))
+    news = NewsConfig(**raw.pop("news", {}))
+    trade = TradeManagementConfig(**raw.pop("trade", {}))
+    accumulate = [AccumulateConfig(**a) for a in raw.pop("accumulate", [])]
+    universe = UniverseConfig(**raw.pop("universe", {}))
+    notify = NotifyConfig(**raw.pop("notify", {}))
     feeds = {**_default_feeds(), **raw.pop("feeds", {})}
     costs = {**_default_costs(), **raw.pop("costs", {})}
-    cfg = BotConfig(symbols=symbols, risk=risk, signals=signals, session=session,
+    cfg = BotConfig(symbols=symbols, risk=risk, signals=signals, session=session, news=news,
+                    trade=trade, accumulate=accumulate, universe=universe, notify=notify,
                     feeds=feeds, costs=costs, **raw)
-    unknown = {s.broker for s in symbols} - set(cfg.brokers)
+    used = {s.broker for s in symbols} | {a.broker for a in accumulate}
+    if universe.enabled:
+        used.add(universe.broker)
+    unknown = used - set(cfg.brokers)
     if unknown:
         raise ValueError(f"symbols use brokers missing from 'brokers': {sorted(unknown)}")
+    traded = {(s.broker, s.symbol) for s in symbols}
+    clash = [a.symbol for a in accumulate if (a.broker, a.symbol) in traded]
+    if clash:
+        raise ValueError(f"{clash}: an accumulated symbol cannot also be traded on the same broker "
+                         "(the bot would put stops on the long-term stack); use a separate broker account")
     return cfg

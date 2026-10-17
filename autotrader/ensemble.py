@@ -33,7 +33,9 @@ class Decision:
 
 def weights_of(cfg: SignalConfig) -> dict[str, float]:
     return {"technical": cfg.technical_weight, "forecast": cfg.forecast_weight,
-            "llm": cfg.llm_weight, "context": cfg.context_weight}
+            "llm": cfg.llm_weight, "context": cfg.context_weight, "news": cfg.news_weight,
+            "patterns": cfg.patterns_weight, "volume": cfg.volume_weight,
+            "trend_strength": cfg.trend_strength_weight, "mean_reversion": cfg.mean_reversion_weight}
 
 
 def combine_scores(scores: dict[str, float | None], cfg: SignalConfig) -> float | None:
@@ -64,4 +66,9 @@ def combine(opinions: list[Opinion | None], cfg: SignalConfig, trend_up: bool | 
         action = SELL
     else:
         action = HOLD
+    mr = next((o for o in present if o.name == "mean_reversion"), None)
+    if action != BUY and mr and mr.score >= cfg.mean_reversion_trigger and trend_up is True \
+            and not (llm and llm.score <= -1.0):
+        action = BUY
+        notes = notes + ["mean-reversion setup: buying a dip inside a confirmed uptrend"]
     return Decision(action, score, present, notes)

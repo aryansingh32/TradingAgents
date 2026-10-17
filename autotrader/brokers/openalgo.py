@@ -56,7 +56,7 @@ class OpenAlgoBroker(HttpBroker):
         data = self._post("openposition", self._where(symbol))
         return float(data.get("quantity", 0) or 0)
 
-    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection) -> dict:
+    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection | None) -> dict:
         return self._post("placeorder", {**self._where(symbol), "action": "BUY",
                                          "pricetype": "MARKET", "quantity": str(int(qty))})
 
@@ -64,5 +64,9 @@ class OpenAlgoBroker(HttpBroker):
         qty = self.position_qty(symbol)
         if qty <= 0:
             return {"filled_qty": 0}
+        return self._post("placeorder", {**self._where(symbol), "action": "SELL",
+                                         "pricetype": "MARKET", "quantity": str(int(qty))})
+
+    def reduce(self, symbol: SymbolConfig, qty: float, price: float, new_stop: float) -> dict:
         return self._post("placeorder", {**self._where(symbol), "action": "SELL",
                                          "pricetype": "MARKET", "quantity": str(int(qty))})

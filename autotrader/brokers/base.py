@@ -36,10 +36,14 @@ class Broker(ABC):
     def position_qty(self, symbol: SymbolConfig) -> float: ...
 
     @abstractmethod
-    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection) -> dict: ...
+    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection | None) -> dict: ...
 
     @abstractmethod
     def close(self, symbol: SymbolConfig, price: float) -> dict: ...
+
+    def reduce(self, symbol: SymbolConfig, qty: float, price: float, new_stop: float) -> dict:
+        """Sell part of a position (scale out), keeping ``new_stop`` on the rest."""
+        raise NotImplementedError(f"{self.name}: partial exits are not supported")
 
 
 class HttpBroker(Broker):

@@ -57,6 +57,7 @@ class Protection:
     highest: float
     initial_stop: float | None = None
     opened_at: str | None = None
+    partial_done: bool = False
 
     def __post_init__(self):
         if self.initial_stop is None:
@@ -129,6 +130,13 @@ class RiskManager:
         if self.cfg.trail_after_atr > 0 and prot.highest - prot.entry >= self.cfg.trail_after_atr * prot.atr:
             prot.stop = max(prot.stop, prot.highest - self.cfg.atr_stop_mult * prot.atr)
         return prot
+
+    @staticmethod
+    def partial_level(prot: Protection, r_multiple: float) -> float | None:
+        """Price at which to scale out, or None when not due / disabled."""
+        if r_multiple <= 0 or prot.partial_done:
+            return None
+        return prot.entry + r_multiple * prot.risk_per_unit
 
     @staticmethod
     def exit_reason(prot: Protection, low: float, high: float) -> tuple[str, float] | None:

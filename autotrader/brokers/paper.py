@@ -41,7 +41,7 @@ class PaperBroker(Broker):
     def position_qty(self, symbol: SymbolConfig) -> float:
         return self.state["positions"].get(symbol.symbol, {}).get("qty", 0.0)
 
-    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection) -> dict:
+    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection | None) -> dict:
         fill = price * (1 + self.slippage)
         cost = qty * fill * (1 + self.fee_rate)
         if cost > self.state["cash"]:
@@ -65,3 +65,15 @@ class PaperBroker(Broker):
         self._save()
         return {"filled_qty": pos["qty"], "fill_price": fill,
                 "pnl": proceeds - pos["qty"] * pos["avg_price"]}
+
+    def reduce(self, symbol: SymbolConfig, qty: float, price: float, new_stop: float) -> dict:
+        pos = self.state["positions"].get(symbol.symbol)
+        if not pos or qty <= 0 or qty >= pos["qty"]:
+            raise BrokerError(f"paper: cannot reduce {symbol.symbol} by {qty}")
+        fill = price * (1 - self.slippage)
+        proceeds = qty * fill * (1 - self.fee_rate)
+        pos["qty"] -= qty
+        self.state["cash"] += proceeds
+        self.state["prices"][symbol.symbol] = price
+        self._save()
+        return {"filled_qty": qty, "fill_price": fill, "pnl": proceeds - qty * pos["avg_price"]}

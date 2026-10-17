@@ -115,7 +115,7 @@ def cmd_backtest(cfg, args):
     print("loading history:")
     for sym, p, cost in _prepared(cfg, md):
         t = time.perf_counter()
-        res = simulate(p, cfg.risk, cfg.signals, cost, session=cfg.session)
+        res = simulate(p, cfg.risk, cfg.signals, cost, session=cfg.session, trade_cfg=cfg.trade)
         print(f"\n== {sym.symbol} ({sym.market}, cost {cost:.2%} per side, simulated in "
               f"{(time.perf_counter() - t) * 1000:.0f} ms)")
         _print_stats(sym.symbol, res.stats)
@@ -133,7 +133,8 @@ def cmd_optimize(cfg, args):
     print("loading history:")
     preps = _prepared(cfg, md)
     t = time.perf_counter()
-    report = walk_forward([(p, c) for _, p, c in preps], cfg.risk, cfg.signals, grid, folds=args.folds)
+    report = walk_forward([(p, c) for _, p, c in preps], cfg.risk, cfg.signals, grid, folds=args.folds,
+                          base_trade=cfg.trade)
     print(f"\ntested {report['combos_tested']} parameter sets x {args.folds} folds "
           f"in {time.perf_counter() - t:.1f}s")
     for f in report["folds"]:

@@ -43,7 +43,7 @@ class FreqtradeBroker(HttpBroker):
     def position_qty(self, symbol: SymbolConfig) -> float:
         return sum(float(t.get("amount", 0)) for t in self._open_trades(symbol.symbol))
 
-    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection) -> dict:
+    def buy(self, symbol: SymbolConfig, qty: float, price: float, protection: Protection | None) -> dict:
         return self._request("POST", "/api/v1/forceenter", json={
             "pair": symbol.symbol, "side": "long", "stakeamount": round(qty * price, 2),
             "entry_tag": "autotrader",
@@ -53,3 +53,10 @@ class FreqtradeBroker(HttpBroker):
         results = [self._request("POST", "/api/v1/forceexit", json={"tradeid": str(t["trade_id"])})
                    for t in self._open_trades(symbol.symbol)]
         return {"exits": results}
+
+    def reduce(self, symbol: SymbolConfig, qty: float, price: float, new_stop: float) -> dict:
+        trades = self._open_trades(symbol.symbol)
+        if not trades:
+            raise BrokerError(f"freqtrade: no open trade for {symbol.symbol}")
+        return self._request("POST", "/api/v1/forceexit", json={
+            "tradeid": str(trades[0]["trade_id"]), "amount": qty})
