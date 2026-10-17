@@ -7,10 +7,22 @@
   "data_source": "live",
   "data_dir": "autotrader_data/btc",
   "symbols": [
-    {"symbol": "BTC/USDT", "market": "crypto", "broker": "paper"},
-    {"symbol": "ETH/USDT", "market": "crypto", "broker": "paper"}
+    {
+      "symbol": "BTC/USDT",
+      "market": "crypto",
+      "broker": "paper"
+    },
+    {
+      "symbol": "ETH/USDT",
+      "market": "crypto",
+      "broker": "paper"
+    }
   ],
-  "feeds": {"crypto": {"type": "crypto"}},
+  "feeds": {
+    "crypto": {
+      "type": "crypto"
+    }
+  },
   "risk": {
     "risk_per_trade": 0.01,
     "max_position_pct": 0.5,
@@ -37,5 +49,29 @@
     "sell_threshold": -0.25,
     "forecast_horizon": 24
   },
-  "brokers": {"paper": {"starting_cash": 10000, "fee_rate": 0.001, "slippage": 0.0005}}
+  "brokers": {
+    "paper": {
+      "starting_cash": 10000,
+      "fee_rate": 0.001,
+      "slippage": 0.0005
+    }
+  },
+  "news": {
+    "enabled": true,
+    "shock_guard": true,
+    "macro_guard": true,
+    "earnings_guard": false,
+    "earnings_days": 1,
+    "blackout_dates": []
+  },
+  "trade": {
+    "partial_tp_r": 1.0,
+    "partial_tp_fraction": 0.5,
+    "breakeven_after_partial": true
+  },
+  "notify": {
+    "telegram": true,
+    "discord": false,
+    "telegram_commands": true
+  }
 }

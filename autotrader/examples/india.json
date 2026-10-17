@@ -7,14 +7,41 @@
   "data_source": "live",
   "data_dir": "autotrader_data/india",
   "symbols": [
-    {"symbol": "RELIANCE.NS",  "market": "india", "broker": "paper"},
-    {"symbol": "HDFCBANK.NS",  "market": "india", "broker": "paper"},
-    {"symbol": "ICICIBANK.NS", "market": "india", "broker": "paper"},
-    {"symbol": "INFY.NS",      "market": "india", "broker": "paper"},
-    {"symbol": "TCS.NS",       "market": "india", "broker": "paper"}
+    {
+      "symbol": "RELIANCE.NS",
+      "market": "india",
+      "broker": "paper"
+    },
+    {
+      "symbol": "HDFCBANK.NS",
+      "market": "india",
+      "broker": "paper"
+    },
+    {
+      "symbol": "ICICIBANK.NS",
+      "market": "india",
+      "broker": "paper"
+    },
+    {
+      "symbol": "INFY.NS",
+      "market": "india",
+      "broker": "paper"
+    },
+    {
+      "symbol": "TCS.NS",
+      "market": "india",
+      "broker": "paper"
+    }
   ],
-  "feeds": {"india": {"type": "yfinance"}},
-  "session": {"skip_open_minutes": 15, "skip_close_minutes": 20},
+  "feeds": {
+    "india": {
+      "type": "yfinance"
+    }
+  },
+  "session": {
+    "skip_open_minutes": 15,
+    "skip_close_minutes": 20
+  },
   "risk": {
     "risk_per_trade": 0.0075,
     "max_position_pct": 0.2,
@@ -33,6 +60,32 @@
     "trend_ema": 200,
     "forecast_horizon": 10
   },
-  "costs": {"india": 0.0012},
-  "brokers": {"paper": {"starting_cash": 500000, "fee_rate": 0.0012, "slippage": 0.0005}}
+  "costs": {
+    "india": 0.0012
+  },
+  "brokers": {
+    "paper": {
+      "starting_cash": 500000,
+      "fee_rate": 0.0012,
+      "slippage": 0.0005
+    }
+  },
+  "news": {
+    "enabled": true,
+    "shock_guard": true,
+    "macro_guard": true,
+    "earnings_guard": true,
+    "earnings_days": 1,
+    "blackout_dates": []
+  },
+  "trade": {
+    "partial_tp_r": 1.0,
+    "partial_tp_fraction": 0.5,
+    "breakeven_after_partial": true
+  },
+  "notify": {
+    "telegram": true,
+    "discord": false,
+    "telegram_commands": true
+  }
 }

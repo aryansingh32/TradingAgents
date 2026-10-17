@@ -1,0 +1,22 @@
+# systemd unit: run AutoTrader 24/7 and restart it if it exits or crashes.
+#   sudo cp autotrader/deploy/autotrader.service /etc/systemd/system/
+#   sudo cp autotrader/deploy/autotrader-watchdog.* /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now autotrader autotrader-watchdog.timer
+# Edit User, WorkingDirectory, the config path and the env file first.
+[Unit]
+Description=AutoTrader trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/opt/autotrader
+EnvironmentFile=/opt/autotrader/.env
+ExecStart=/opt/autotrader/.venv/bin/autotrader run -c /opt/autotrader/btc.json
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

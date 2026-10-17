@@ -5,22 +5,78 @@
   "loop_seconds": 60,
   "risk_loop_seconds": 5,
   "symbols": [
-    {"symbol": "BTC/USDT", "market": "crypto", "broker": "freqtrade"},
-    {"symbol": "SPY", "market": "us", "broker": "alpaca"},
-    {"symbol": "RELIANCE", "market": "india", "broker": "openalgo",
-     "exchange": "NSE", "product": "CNC"}
+    {
+      "symbol": "BTC/USDT",
+      "market": "crypto",
+      "broker": "freqtrade"
+    },
+    {
+      "symbol": "SPY",
+      "market": "us",
+      "broker": "alpaca"
+    },
+    {
+      "symbol": "RELIANCE",
+      "market": "india",
+      "broker": "openalgo",
+      "exchange": "NSE",
+      "product": "CNC"
+    }
   ],
   "feeds": {
-    "crypto": {"type": "crypto"},
-    "us": {"type": "alpaca", "feed": "iex"},
-    "india": {"type": "openalgo", "host": "http://127.0.0.1:5000", "exchange": "NSE"}
+    "crypto": {
+      "type": "crypto"
+    },
+    "us": {
+      "type": "alpaca",
+      "feed": "iex"
+    },
+    "india": {
+      "type": "openalgo",
+      "host": "http://127.0.0.1:5000",
+      "exchange": "NSE"
+    }
   },
-  "risk": {"risk_per_trade": 0.005, "max_position_pct": 0.1, "max_daily_loss_pct": 0.02,
-           "vol_target_annual": 0.5},
-  "signals": {"use_llm": true, "llm_refresh_hours": 24},
+  "risk": {
+    "risk_per_trade": 0.005,
+    "max_position_pct": 0.1,
+    "max_daily_loss_pct": 0.02,
+    "vol_target_annual": 0.5
+  },
+  "signals": {
+    "use_llm": true,
+    "llm_refresh_hours": 24
+  },
   "brokers": {
-    "freqtrade": {"type": "freqtrade", "url": "http://127.0.0.1:8080"},
-    "alpaca":    {"type": "alpaca", "live": false},
-    "openalgo":  {"type": "openalgo", "host": "http://127.0.0.1:5000"}
+    "freqtrade": {
+      "type": "freqtrade",
+      "url": "http://127.0.0.1:8080"
+    },
+    "alpaca": {
+      "type": "alpaca",
+      "live": false
+    },
+    "openalgo": {
+      "type": "openalgo",
+      "host": "http://127.0.0.1:5000"
+    }
+  },
+  "news": {
+    "enabled": true,
+    "shock_guard": true,
+    "macro_guard": true,
+    "earnings_guard": true,
+    "earnings_days": 1,
+    "blackout_dates": []
+  },
+  "trade": {
+    "partial_tp_r": 1.0,
+    "partial_tp_fraction": 0.5,
+    "breakeven_after_partial": true
+  },
+  "notify": {
+    "telegram": true,
+    "discord": false,
+    "telegram_commands": true
   }
 }

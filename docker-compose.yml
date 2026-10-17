@@ -31,6 +31,28 @@ services:
     profiles:
       - ollama
 
+  # 24/7 bot: docker compose --profile autotrader up -d autotrader
+  # Put the config in ./autotrader_config/bot.json and keys in .env.
+  autotrader:
+    build: .
+    env_file:
+      - .env
+    entrypoint: ["autotrader"]
+    command: ["run", "-c", "/home/appuser/config/bot.json"]
+    working_dir: /home/appuser/state
+    volumes:
+      - ./autotrader_config:/home/appuser/config:ro
+      - autotrader_state:/home/appuser/state
+      - ${TRADINGAGENTS_DATA_DIR:-tradingagents_data}:/home/appuser/.tradingagents
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "find /home/appuser/state -name heartbeat -mmin -5 | grep -q ."]
+      interval: 60s
+      retries: 3
+    profiles:
+      - autotrader
+
 volumes:
+  autotrader_state:
   tradingagents_data:
   ollama_data:

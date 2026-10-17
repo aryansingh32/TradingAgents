@@ -7,6 +7,7 @@ Commands:
   backtest   backtest every symbol over its history with costs and protections
   optimize   walk-forward optimization; --apply saves the chosen parameters
   status     open positions, protective levels and the last decisions
+  doctor     check every feed, broker, World Monitor, LLM key and notifier
 """
 
 from __future__ import annotations
@@ -159,6 +160,58 @@ def cmd_optimize(cfg, args):
         print(f"saved to {out}; the bot loads it next to the config")
 
 
+def cmd_doctor(cfg, args):
+    import os
+
+    from autotrader.engine import build_market_data
+
+    ok = True
+
+    def report(name, fn):
+        nonlocal ok
+        try:
+            print(f"  OK    {name}: {fn()}")
+        except Exception as exc:
+            ok = False
+            print(f"  FAIL  {name}: {exc}")
+
+    print("market data:")
+    md = build_market_data(cfg)
+    seen = set()
+    for sym in [*cfg.symbols, *cfg.accumulate]:
+        if sym.market in seen:
+            continue
+        seen.add(sym.market)
+        report(f"{sym.market} candles {sym.price_symbol}",
+               lambda s=sym: f"{len(md.candles(s.price_symbol, s.market, cfg.interval))} closed {cfg.interval} candles")
+        report(f"{sym.market} quote {sym.price_symbol}", lambda s=sym: f"{md.quote(s.price_symbol, s.market).price:,.4f}")
+    print("brokers:")
+    from autotrader.brokers import build_broker
+
+    for name, section in cfg.brokers.items():
+        report(name, lambda n=name, sec=section: f"equity {build_broker(n, sec, cfg.data_path, cfg.mode == 'live').equity():,.2f}")
+    print("intelligence:")
+    if cfg.news.enabled:
+        from tradingagents.dataflows.vendors.worldmonitor import WorldMonitorClient
+
+        client = WorldMonitorClient(base_url=cfg.news.base_url)
+        report("World Monitor news", lambda: f"{len(client.news(cfg.news.variant))} stories")
+    if cfg.signals.use_context and "crypto" in seen:
+        from autotrader.context import CryptoContext
+
+        report("crypto Fear & Greed", lambda: CryptoContext()._fear_greed())
+    if cfg.signals.use_llm:
+        keys = [k for k in os.environ if k.endswith("_API_KEY") and os.environ[k] and k != "WORLDMONITOR_API_KEY"]
+        report("LLM key", lambda: ", ".join(keys) if keys else (_ for _ in ()).throw(RuntimeError("no *_API_KEY set")))
+    print("notifications:")
+    from autotrader.notify import Notifier
+
+    n = Notifier(cfg.notify)
+    print(f"  telegram {'on' if n.telegram_on else 'off'}, discord {'on' if n.discord_on else 'off'}")
+    print("\nall checks passed" if ok else "\nsome checks failed; the bot skips what it cannot reach")
+    return 0 if ok else 1
+
+
 def cmd_status(cfg, args):
     state_path = cfg.data_path / "bot_state.json"
     signals_path = cfg.data_path / "signals.json"
@@ -181,7 +234,7 @@ def cmd_status(cfg, args):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="autotrader", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["run", "once", "monitor", "backtest", "optimize", "status"])
+    parser.add_argument("command", choices=["run", "once", "monitor", "backtest", "optimize", "status", "doctor"])
     parser.add_argument("--config", "-c", default="autotrader.json")
     parser.add_argument("--trades", action="store_true", help="backtest: list every trade")
     parser.add_argument("--json", action="store_true", help="monitor: print JSON")
@@ -195,8 +248,8 @@ def main(argv=None):
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = load_config(args.config)
     handler = {"run": cmd_run, "once": cmd_run, "backtest": cmd_backtest, "optimize": cmd_optimize,
-               "monitor": cmd_monitor, "status": cmd_status}[args.command]
-    handler(cfg, args)
+               "monitor": cmd_monitor, "status": cmd_status, "doctor": cmd_doctor}[args.command]
+    return handler(cfg, args)
 
 
 if __name__ == "__main__":

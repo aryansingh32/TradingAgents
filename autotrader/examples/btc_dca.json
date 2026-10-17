@@ -1,0 +1,41 @@
+{
+  "mode": "paper",
+  "interval": "1d",
+  "data_source": "live",
+  "data_dir": "autotrader_data/dca",
+  "symbols": [],
+  "accumulate": [
+    {
+      "symbol": "BTC/USDT",
+      "market": "crypto",
+      "broker": "stack",
+      "amount": 50,
+      "every_hours": 168,
+      "dip_multiplier": 2.0,
+      "fear_multiplier": 1.5,
+      "greed_multiplier": 0.5,
+      "max_multiplier": 3.0
+    },
+    {
+      "symbol": "ETH/USDT",
+      "market": "crypto",
+      "broker": "stack",
+      "amount": 25,
+      "every_hours": 168
+    }
+  ],
+  "news": {
+    "enabled": false
+  },
+  "notify": {
+    "telegram": true
+  },
+  "brokers": {
+    "stack": {
+      "type": "paper",
+      "starting_cash": 5000,
+      "fee_rate": 0.001,
+      "slippage": 0.0005
+    }
+  }
+}

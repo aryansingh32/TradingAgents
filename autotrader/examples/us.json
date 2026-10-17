@@ -7,14 +7,42 @@
   "data_source": "live",
   "data_dir": "autotrader_data/us",
   "symbols": [
-    {"symbol": "SPY",  "market": "us", "broker": "alpaca"},
-    {"symbol": "QQQ",  "market": "us", "broker": "alpaca"},
-    {"symbol": "AAPL", "market": "us", "broker": "alpaca"},
-    {"symbol": "MSFT", "market": "us", "broker": "alpaca"},
-    {"symbol": "NVDA", "market": "us", "broker": "alpaca"}
+    {
+      "symbol": "SPY",
+      "market": "us",
+      "broker": "alpaca"
+    },
+    {
+      "symbol": "QQQ",
+      "market": "us",
+      "broker": "alpaca"
+    },
+    {
+      "symbol": "AAPL",
+      "market": "us",
+      "broker": "alpaca"
+    },
+    {
+      "symbol": "MSFT",
+      "market": "us",
+      "broker": "alpaca"
+    },
+    {
+      "symbol": "NVDA",
+      "market": "us",
+      "broker": "alpaca"
+    }
   ],
-  "feeds": {"us": {"type": "alpaca", "feed": "iex"}},
-  "session": {"skip_open_minutes": 15, "skip_close_minutes": 15},
+  "feeds": {
+    "us": {
+      "type": "alpaca",
+      "feed": "iex"
+    }
+  },
+  "session": {
+    "skip_open_minutes": 15,
+    "skip_close_minutes": 15
+  },
   "risk": {
     "risk_per_trade": 0.0075,
     "max_position_pct": 0.25,
@@ -33,5 +61,28 @@
     "trend_ema": 200,
     "forecast_horizon": 14
   },
-  "brokers": {"alpaca": {"type": "alpaca", "live": false}}
+  "brokers": {
+    "alpaca": {
+      "type": "alpaca",
+      "live": false
+    }
+  },
+  "news": {
+    "enabled": true,
+    "shock_guard": true,
+    "macro_guard": true,
+    "earnings_guard": true,
+    "earnings_days": 1,
+    "blackout_dates": []
+  },
+  "trade": {
+    "partial_tp_r": 1.0,
+    "partial_tp_fraction": 0.5,
+    "breakeven_after_partial": true
+  },
+  "notify": {
+    "telegram": true,
+    "discord": false,
+    "telegram_commands": true
+  }
 }

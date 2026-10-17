@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart AutoTrader when its heartbeat goes stale
+
+[Service]
+Type=oneshot
+ExecStart=/opt/autotrader/autotrader/deploy/watchdog.sh /opt/autotrader/autotrader_data/btc/heartbeat 300 autotrader

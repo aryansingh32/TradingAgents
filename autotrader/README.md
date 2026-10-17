@@ -61,6 +61,89 @@ The backtest and the live bot run the same signal code, and tests check
 that they agree bar for bar and that no future data can leak into a
 decision.
 
+## Everything the bot watches
+
+| Family | What it reads | Role |
+|---|---|---|
+| Technical | EMA50/200 trend, MACD momentum, RSI, 20-bar breakouts | core opinion |
+| Analog forecast | the 50 most similar past bars and what followed | core opinion |
+| Trend strength | Supertrend direction × ADX | opinion |
+| Volume | price vs rolling VWAP, OBV trend, volume spikes | opinion |
+| Candlestick patterns | engulfing, hammer / shooting star, morning / evening star after a move | opinion |
+| Mean reversion | RSI(2) and Bollinger dips inside a 200-bar uptrend (Connors-style) | **setup**: can buy on its own when the daily trend is confirmed up |
+| Higher timeframe | daily close vs rising 200 EMA | **filter**: no buys in a daily downtrend |
+| Crypto positioning | funding rate, open interest, Fear & Greed | contrarian tilt at extremes |
+| News (World Monitor) | stories mentioning the symbol, weighted by importance, corroboration, recency; market-implication cards | light tilt |
+| Event risk (World Monitor) | critical corroborated breaking news, market-stress / VIX-spike signals, macro release days (Fed, CPI…), earnings, blackout dates | **guard**: blocks new entries |
+| AI debate (TradingAgents) | analysts incl. World Monitor intelligence, bull vs bear, risk team | opinion + **veto** on a Sell |
+
+Weights live under `signals` in the config, and the optimizer can tune any
+of them. Backtests replay every price-based family. News, positioning and the
+debate have no reliable history to replay, so they are only used live.
+
+### World Monitor
+
+[World Monitor](https://github.com/koala73/worldmonitor) scores and
+deduplicates hundreds of live feeds. The bot and the debate read its:
+- finance news digest (importance, threat level, story phase, tickers);
+- cross-source escalation signals;
+- market-implication cards (Pro plan);
+- economic and earnings calendars.
+
+Set `WORLDMONITOR_API_KEY` (a World Monitor API plan), or run it yourself
+(AGPL-3.0, see its `SELF_HOSTING.md`) and set `WORLDMONITOR_BASE_URL` or
+`news.base_url`. Without either, the news parts switch off and everything
+else keeps running. In the debate, the News Analyst gets a
+`get_world_monitor` tool next to its news, FRED and Polymarket tools.
+
+## Features from the most-used bots
+
+| Feature | Seen in | Here |
+|---|---|---|
+| Stop loss, trailing stop, take profit, ROI exits | freqtrade, 3Commas, Jesse | ATR stop, trailing, R-multiple target |
+| Scale out + breakeven | 3Commas "smart trade", Jesse | `trade.partial_tp_r`: sell half at 1R, stop to breakeven |
+| Protections | freqtrade | cooldown, stop-loss guard, drawdown and losing-streak guards |
+| Volume pair list | freqtrade, hummingbot screeners | `universe`: top-N Binance USDT pairs by volume, or a stock watchlist ranked by 12-1 momentum |
+| DCA bot | Pionex, 3Commas, Binance auto-invest | `accumulate`: scheduled buys, more below the 200-day EMA and in extreme fear, less in greed; never sells |
+| Telegram control | freqtrade | alerts plus `/status /pause /resume /panic /daily`, only from your chat; Discord webhook alerts |
+| Hyperopt | freqtrade | walk-forward optimizer that refuses parameters with no out-of-sample edge |
+| Dry run / paper | all | default mode; live needs two explicit switches |
+| 24/7 service | freqtrade docker | systemd unit with auto-restart, heartbeat watchdog, docker compose service with a health check |
+
+Left out on purpose:
+- **Martingale DCA ("safety orders")** doubles down as a position falls,
+  which is the classic way these bots blow up accounts.
+- **Grid bots** only profit in ranges and lose badly in trends.
+- **Shorting** is not supported.
+- **Latency arbitrage** needs co-location this design can't provide.
+
+For market making or cross-exchange arbitrage, hummingbot is the right tool.
+
+### 24/7 operation
+
+```bash
+autotrader doctor -c btc.json        # checks every feed, broker, World Monitor, LLM key, Telegram
+# systemd (Linux VPS): restart on crash + restart when the heartbeat goes stale
+sudo cp autotrader/deploy/autotrader*.service autotrader/deploy/autotrader-watchdog.timer /etc/systemd/system/
+sudo systemctl enable --now autotrader autotrader-watchdog.timer
+# or Docker
+mkdir autotrader_config && cp btc.json autotrader_config/bot.json
+docker compose --profile autotrader up -d autotrader
+```
+
+Telegram: create a bot with @BotFather, then set `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` and `"notify": {"telegram": true}`. You get alerts for:
+- entries, exits and partial exits;
+- entries blocked by news;
+- errors and stale data;
+- a daily summary.
+
+`/panic` closes every position and pauses new entries until you send `/resume`.
+
+More example configs:
+- `btc_dca.json`: weekly smart DCA into BTC and ETH, on its own paper account;
+- `crypto_scanner.json`: trades the 5 most liquid USDT pairs, refreshed daily.
+
 ## Real-time data
 
 | Market | Primary feed | Fallbacks | Notes |
@@ -86,6 +169,7 @@ autotrader optimize -c btc.json                 # walk-forward; add --apply to s
 autotrader once     -c btc.json                 # one decision pass with the reasons
 autotrader run      -c btc.json                 # trade continuously (paper by default)
 autotrader status   -c btc.json                 # positions, levels, guards, last decisions
+autotrader doctor   -c btc.json                 # connectivity check for everything the bot uses
 ```
 
 - `optimize --apply` writes `btc.tuned.json` next to the config, and the bot

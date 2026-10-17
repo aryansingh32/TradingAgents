@@ -51,12 +51,19 @@ from autotrader.signals_extra import extra_opinions
 log = logging.getLogger(__name__)
 
 
+def markets_used(cfg: BotConfig) -> set[str]:
+    markets = {s.market for s in cfg.symbols} | {a.market for a in cfg.accumulate}
+    if cfg.universe.enabled:
+        markets.add(cfg.universe.market)
+    return markets
+
+
 def build_market_data(cfg: BotConfig) -> MarketData:
     if cfg.data_source in ("yfinance", "csv"):
         spec = {"type": cfg.data_source, **({"data_dir": cfg.data_dir} if cfg.data_source == "csv" else {})}
         feeds = {m: build_feed(spec) for m in ("crypto", "us", "india")}
     else:
-        feeds = {m: build_feed(cfg.feeds[m]) for m in {s.market for s in cfg.symbols}}
+        feeds = {m: build_feed(cfg.feeds[m]) for m in markets_used(cfg)}
     max_age = math.inf if cfg.data_source == "csv" else cfg.max_data_age_bars
     return MarketData(feeds, cfg.lookback_days, max_age)
 
@@ -82,7 +89,7 @@ class Engine:
             self.llm = LLMAdvisor(self.dir, cfg.signals.llm_refresh_hours, cfg.signals.llm_analysts)
         self.context = context
         if self.context is None and cfg.signals.use_context and cfg.signals.context_weight > 0 \
-                and any(s.market == "crypto" for s in cfg.symbols):
+                and "crypto" in markets_used(cfg):
             from autotrader.context import CryptoContext
 
             self.context = CryptoContext()
